@@ -57,18 +57,6 @@ User sends message
   → Frontend renders the preview via iframe or Sandpack (src/modules/spaces/ui/components/fragment-web.tsx)
 ```
 
-### Key Application Files
-
-
-| File                                                | Role                                                                |
-| --------------------------------------------------- | ------------------------------------------------------------------- |
-| `src/inngest/functions.ts`                          | Creates the sandbox, wires up agent tools, resolves the sandbox URL |
-| `src/inngest/utils.ts`                              | `getSandbox()` — reconnects to a running sandbox by ID              |
-| `src/prompt.ts`                                     | System prompt telling the AI agent what's available in the sandbox  |
-| `src/constants.ts`                                  | `SANDBOX_TIMEOUT_IN_MS` — sandbox lifetime (30 min)                 |
-| `src/modules/spaces/ui/components/fragment-web.tsx` | Renders the sandbox URL in an iframe or Sandpack                    |
-
-
 ### How the Sandbox is Created
 
 ```typescript
