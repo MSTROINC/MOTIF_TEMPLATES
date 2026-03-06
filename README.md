@@ -16,6 +16,8 @@ flowchart LR
     F --> G[Preview rendered\nin iframe]
 ```
 
+
+
 ### Motif Creation Flow — Building a New Template
 
 ```mermaid
@@ -28,6 +30,8 @@ flowchart TD
     S6 --> S7[Update Sandbox.create\nsrc/inngest/functions.ts]
     S7 --> S8[Publish via CLI\ne2b template create]
 ```
+
+
 
 ### Sandbox Lifecycle
 
@@ -46,6 +50,8 @@ flowchart LR
     RT6 -.->|30 min timeout| RT7[Sandbox terminates]
     Build_Time --> Runtime
 ```
+
+
 
 ```
 User sends message
@@ -86,10 +92,11 @@ The port **must match** what `compile_page.sh` starts the dev server on. Current
 ## Current Motifs
 
 
-| Motif            | Alias                 | Stack                                    | Port | Startup |
-| ---------------- | --------------------- | ---------------------------------------- | ---- | ------- |
-| **react-shadcn** | `mspace-react-shadcn` | Vite + React 18 + TS + Tailwind + shadcn | 5173 | ~240ms  |
-| **nextjs**       | `mspace-nextjs-Motif` | Next.js 15 + shadcn (all components)     | 3000 | Slower  |
+| Motif            | Alias                 | Stack                                              | Port | Startup |
+| ---------------- | --------------------- | -------------------------------------------------- | ---- | ------- |
+| **react-shadcn** | `mspace-react-shadcn` | Vite + React 18 + TS + Tailwind + shadcn           | 5173 | ~240ms  |
+| **react-earth**  | `mspace-react-earth`  | Vite + React 18 + TS + CesiumJS + Resium + shadcn  | 5173 | ~240ms  |
+| **nextjs**       | `mspace-nextjs-Motif` | Next.js 15 + shadcn (all components)               | 3000 | Slower  |
 
 
 The **react-shadcn** Motif is used in production. It's fast because all dependencies are pre-installed and the Vite dev server starts near-instantly.
@@ -136,7 +143,7 @@ mkdir -p Motifs/<Motif-name>/src/components/ui
 team_id = "4f145bbd-574d-49c8-b091-3241ea2a6bd4"
 start_cmd = "/compile_page.sh"
 dockerfile = "Motif.Dockerfile"
-Motif_name = "mspace-<Motif-name>"
+M
 ```
 
 - `team_id` — MSTRO's Motif team (always the same value)
@@ -244,7 +251,7 @@ For a Vite-based Motif, you need these files at minimum:
 - `vite`, `@vitejs/plugin-react`, `typescript` — Dev tooling
 - `tailwindcss`, `autoprefixer`, `postcss` — Styling
 
-`**vite.config.ts**` — Must bind to `0.0.0.0`:
+`**vite.config.ts`** — Must bind to `0.0.0.0`:
 
 ```typescript
 import { defineConfig } from 'vite'
