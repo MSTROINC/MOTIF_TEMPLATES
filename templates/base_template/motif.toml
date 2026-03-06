@@ -1,0 +1,17 @@
+# This is a config for E2B sandbox template.
+# You can use template ID (teuczxq1a4blu9nrlly0) or template name (mspace-react-shadcn) to create a sandbox:
+
+# Python SDK
+# from e2b import Sandbox, AsyncSandbox
+# sandbox = Sandbox.create("mspace-react-shadcn") # Sync sandbox
+# sandbox = await AsyncSandbox.create("mspace-react-shadcn") # Async sandbox
+
+# JS SDK
+# import { Sandbox } from 'e2b'
+# const sandbox = await Sandbox.create('mspace-react-shadcn')
+
+team_id = "4f145bbd-574d-49c8-b091-3241ea2a6bd4"
+start_cmd = "/compile_page.sh"
+dockerfile = "motif.Dockerfile"
+motif_name = "mspace-react-shadcn"
+motif_id = "teuczxq1a4blu9nrlly0"
