@@ -1,0 +1,7 @@
+# ConnectWise ticket count dashboard via WinTracker
+# Usage: Sandbox.create("mspace-cw-tickets")
+
+team_id = "4f145bbd-574d-49c8-b091-3241ea2a6bd4"
+start_cmd = "/compile_page.sh"
+dockerfile = "motif.Dockerfile"
+motif_name = "mspace-cw-tickets"
