@@ -50,7 +50,10 @@ import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 
 Chart imports (only when visualizations are needed):
-import { ChartContainer, ChartTooltip, ChartTooltipContent, BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, CHART_COLORS } from "@/components/ui/chart"
+import { useState } from "react"
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid } from "recharts"
+import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent } from "@/components/ui/chart"
+import type { ChartConfig } from "@/components/ui/chart"
 
 Tools:
 - createOrUpdateFiles: Write files (relative paths like "src/App.tsx")
@@ -83,18 +86,31 @@ The file must follow this pattern:
 - Insights Card at the bottom with recommended_use text
 
 BADGE VARIANTS available:
-default | secondary | destructive | outline | success | warning | info
+default | secondary | destructive | outline
 
-Use Badge variant="success" for active/completed statuses, "warning" for pending, "destructive" for error/inactive.
+Use Badge variant="default" for active/completed statuses, "secondary" for neutral/pending, "destructive" for error/inactive.
 
 COLLECTION TABLE PATTERN:
 Derive column headers from collection.schema keys. Render each record as a TableRow.
 Use Badge inside TableCell for status-like string fields.
 
-CHART PATTERN (when requested):
-Wrap in a Card with CardHeader and CardContent.
-Use ChartContainer with aspect-video for sizing.
-Use CHART_COLORS array for consistent palette.
+<Tickets per technician — area chart>
+CHART PATTERN — Interactive Area Chart (technician performance):
+- ChartConfig per technician with label + hex color; daily data with weekend dips
+- Toggle visibility per technician via Button group in the Card header; prevent deselecting all
+- Gradient fills per series; clean axes, tooltip with dot indicator, bottom legend
+- this ui element should always exist.
+</Tickets per technician — area chart>
+
+
+-------------
+<application>
+Steady State Design. Retain the application's design and do not alter it.  
+From this design, attach the dataspace data provide, match to the components.
+</application>
+-------------
+
+
 
 Style Classes to Use:
 - Root: min-h-screen bg-background p-8
