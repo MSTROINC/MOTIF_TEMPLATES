@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# Startup script for Vite dev server
 function ping_server() {
     counter=0
     response=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:5173")
