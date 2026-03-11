@@ -120,14 +120,81 @@ Motifs/<name>/
 └── src/
     ├── main.tsx          # React entry point
     ├── App.tsx           # Main component (AI agent edits this)
+    ├── channel.config.ts # Data contract (collections, fields, refresh)
     ├── index.css         # Tailwind + CSS variables (theme)
-    ├── lib/utils.ts      # cn() utility
+    ├── lib/
+    │   ├── utils.ts      # cn() utility
+    │   └── channel-types.ts  # TypeScript types for the channel system
     └── components/ui/    # Pre-installed shadcn components
         ├── button.tsx
         ├── card.tsx
         ├── table.tsx
         └── chart.tsx     # Custom chart wrapper around recharts
 ```
+
+## Channel Config (`channel.config.ts`)
+
+Each Motif includes a `src/channel.config.ts` file that declares the **data contract** between the sandbox and the mHive data layer. It tells the AI agent (and the runtime) what collections exist, what fields each collection has, and how data should be fetched.
+
+```
+src/
+├── channel.config.ts          # Data contract (collections, fields, refresh)
+└── lib/
+    └── channel-types.ts       # TypeScript types for the channel system
+```
+
+### Structure
+
+```typescript
+const config: ChannelConfig = {
+  collections: {
+    primary: {                          // collection key
+      description: "Main data table",
+      fields: {
+        id:     { type: "string", required: true },
+        name:   { type: "string", required: true },
+        value:  { type: "number" },
+        status: { type: "string", enum: ["active", "pending", "inactive"] },
+      },
+      pagination: { defaultLimit: 25, maxLimit: 100 },
+    },
+    metrics: {
+      description: "Aggregated chart data",
+      fields: {
+        label: { type: "string", required: true },
+        value: { type: "number", required: true },
+      },
+    },
+  },
+  refreshInterval: 30000, // poll every 30 s (0 = manual only)
+};
+```
+
+### Key Concepts
+
+| Concept | Description |
+| --- | --- |
+| **Collection** | A named data set (e.g. `primary`, `metrics`). Maps to a table or query result from mHive. |
+| **Field** | A typed column inside a collection. Supported types: `string`, `number`, `boolean`, `array`, `object`. |
+| **required** | Marks a field as non-nullable. |
+| **enum** | Restricts a string field to a fixed set of values. |
+| **pagination** | Optional per-collection limits (`defaultLimit`, `maxLimit`). |
+| **refreshInterval** | Milliseconds between automatic data re-fetches. `0` disables auto-refresh. |
+
+### How It's Used
+
+1. **Baseline contract** — The config ships with sensible defaults so the Motif compiles out of the box.
+2. **AI override** — At build time the AI agent may extend or fully replace the config based on the user's request and the actual mHive data schema injected via environment variables.
+3. **Runtime validation** — Components can import the config to know which fields to render in tables, charts, and forms without hard-coding column names.
+
+### Type System
+
+All types live in `src/lib/channel-types.ts`:
+
+- `ChannelConfig` — top-level config shape (collections + refreshInterval).
+- `ChannelCollectionDef` — a single collection (fields + optional pagination).
+- `ChannelFieldDef` — a single field (type, required, enum, description).
+- `ChannelDataPayload` / `ChannelStatusPayload` / `ChannelSchemaPayload` — runtime message shapes exchanged between the sandbox and the host.
 
 ## Creating a New Motif
 
@@ -382,7 +449,7 @@ Same publish command. The CLI detects the existing `Motif_id` in `Motif.toml` an
 ## Design Constraints
 
 1. **Pre-install everything** — Sandboxes cannot run `npm install` at runtime. All dependencies must be baked into the Docker image.
-2. **Single editable file** — The AI agent is prompted to only edit `src/App.tsx`. Keep the Motif simple with one entry point.
+2. **Multi-screen support** — The AI agent can create and edit multiple screens/pages beyond `src/App.tsx`.
 3. **Host binding** — Dev servers must listen on `0.0.0.0`, not `localhost`.
 4. **Port consistency** — The port in `compile_page.sh`, `vite.config.ts`, and `resolveSandboxUrl()` must all match.
 5. **Prompt ↔ Motif sync** — Any component added/removed from the Motif must be reflected in `src/prompt.ts`.
@@ -392,7 +459,7 @@ Same publish command. The CLI detects the existing `Motif_id` in `Motif.toml` an
 ## Adding New shadcn Components to an Existing Motif
 
 1. Add the component file to `Motifs/<name>/src/components/ui/`
-2. Add its Radix dependency to `package.json` if needed
+2. Add its Base dependency to `package.json` if needed
 3. Update `src/prompt.ts` with the new import path
 4. Republish the Motif (see Publishing section)
 5. Existing sandboxes are unaffected — only new sandboxes use the updated Motif
