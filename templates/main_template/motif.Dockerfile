@@ -1,4 +1,4 @@
-# Vite + React + CesiumJS + shadcn template for mSpace Earth visualizations
+# Fast Vite + React + shadcn template for mSpace dataspaces
 FROM node:21-slim
 
 # Install curl for health checks

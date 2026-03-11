@@ -1,5 +1,5 @@
 {
-  "name": "mspace-react-earth",
+  "name": "mspace-react-shadcn",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -20,10 +20,10 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.460.0",
+    "recharts": "^2.13.3",
     "tailwind-merge": "^2.5.4",
     "tailwindcss-animate": "^1.0.7",
-    "cesium": "^1.125.0",
-    "resium": "^1.19.4"
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
@@ -33,7 +33,6 @@
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11",
-    "vite-plugin-cesium": "^1.2.23"
+    "vite": "^5.4.11"
   }
 }
