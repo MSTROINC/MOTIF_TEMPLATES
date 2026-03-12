@@ -1,0 +1,11 @@
+# This is a config for Motif sandbox template.
+# You can use template name (mspace-ticket-dashboard) to create a sandbox:
+
+# JS SDK
+# import { Sandbox } from 'e2b'
+# const sandbox = await Sandbox.create('mspace-ticket-dashboard')
+
+team_id = "4f145bbd-574d-49c8-b091-3241ea2a6bd4"
+start_cmd = "/compile_page.sh"
+dockerfile = "motif.Dockerfile"
+template_name = "mspace-ticket-dashboard"
