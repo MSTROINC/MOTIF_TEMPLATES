@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import type {
   ChannelConfig,
@@ -12,14 +12,10 @@ import type {
 export type { ChannelConfig, ChannelPagination };
 
 const SOCKET_URL =
-  (import.meta as any).env?.VITE_CHANNEL_SOCKET_URL ||
-  (typeof process !== "undefined" && (process as any).env?.CHANNEL_SOCKET_URL) ||
-  "http://localhost:3001";
+  (import.meta as any).env?.VITE_CHANNEL_SOCKET_URL || "http://localhost:3001";
 
 const MOTIF_INSTANCE_ID =
-  (import.meta as any).env?.VITE_CHANNEL_MOTIF_INSTANCE_ID ||
-  (typeof process !== "undefined" && (process as any).env?.CHANNEL_MOTIF_INSTANCE_ID) ||
-  "";
+  (import.meta as any).env?.VITE_CHANNEL_MOTIF_INSTANCE_ID || "";
 
 let socket: Socket | null = null;
 let channelId: string | null = null;

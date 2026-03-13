@@ -1,2 +1,8 @@
 *node_modules
 .DS_Store
+templates/main_template/mspace-ms-graph.zip
+dist
+templates/main_template/msCRM2.zip
+templates/main_template/e2b.Dockerfile
+.gitignore
+templates/main_template/e2b.toml
