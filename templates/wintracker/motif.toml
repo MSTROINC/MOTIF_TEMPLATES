@@ -1,0 +1,7 @@
+# WinTracker TAKT Dashboard - Motif Template
+# Phase 1: Read-only dashboard for service team performance tracking
+
+team_id = "4f145bbd-574d-49c8-b091-3241ea2a6bd4"
+start_cmd = "/compile_page.sh"
+dockerfile = "e2b.Dockerfile"
+template_name = "mspace-wintracker-dashboard"

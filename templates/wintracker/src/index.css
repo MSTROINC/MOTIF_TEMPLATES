@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* WinTracker uses dark theme by default */
+    --background: 240 10% 4%;
+    --foreground: 0 0% 95%;
+    --card: 240 6% 8%;
+    --card-foreground: 0 0% 95%;
+    --popover: 240 6% 8%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 10% 4%;
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 0 0% 95%;
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 4% 16%;
+    --accent-foreground: 0 0% 95%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 24 83% 55%;
+    --radius: 0.5rem;
+
+    /* DataCorps brand chart colors */
+    --chart-1: 211 100% 70%;  /* #45a2ff DataCorps Blue */
+    --chart-2: 19 79% 55%;    /* #e66e32 DataCorps Orange */
+    --chart-3: 145 63% 42%;   /* #28a745 Success Green */
+    --chart-4: 45 100% 51%;   /* #ffc107 Warning Yellow */
+    --chart-5: 354 70% 54%;   /* #dc3545 TAKT Red */
+
+    /* WinTracker specific tokens */
+    --wt-orange: 19 79% 55%;
+    --wt-blue: 211 100% 70%;
+    --wt-red: 354 70% 54%;
+    --wt-green: 145 63% 42%;
+    --wt-yellow: 45 100% 51%;
+    --wt-teal: 188 78% 41%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    background: linear-gradient(135deg, #0a0a0a, #1a1a2e, #0f0f0f);
+    min-height: 100vh;
+  }
+}
+
+/* WinTracker status animations */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+.animate-shake {
+  animation: shake 0.5s ease-in-out;
+}
