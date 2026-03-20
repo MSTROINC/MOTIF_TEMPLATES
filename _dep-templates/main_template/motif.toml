@@ -1,0 +1,6 @@
+# This is a config for E2B sandbox template.
+# keep team_id as is
+team_id = "4f145bbd-574d-49c8-b091-3241ea2a6bd4"
+start_cmd = "/compile_page.sh"
+dockerfile = "E2B.Dockerfile"
+template_name = "mspace-ms-graph"

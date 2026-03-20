@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import type {
   ChannelConfig,
@@ -8,21 +8,27 @@ import type {
   ChannelPagination,
 } from "./channel-types";
 
-// Re-export types for convenience
 export type { ChannelConfig, ChannelPagination };
 
 const SOCKET_URL =
   (import.meta as any).env?.VITE_CHANNEL_SOCKET_URL ||
-  (typeof process !== "undefined" && (process as any).env?.CHANNEL_SOCKET_URL) ||
-  "http://localhost:3001";
+  (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
 
 const MOTIF_INSTANCE_ID =
-  (import.meta as any).env?.VITE_CHANNEL_MOTIF_INSTANCE_ID ||
-  (typeof process !== "undefined" && (process as any).env?.CHANNEL_MOTIF_INSTANCE_ID) ||
-  "";
+  (import.meta as any).env?.VITE_CHANNEL_MOTIF_INSTANCE_ID || "";
+
+function getUrlParam(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get(key);
+}
 
 let socket: Socket | null = null;
 let channelId: string | null = null;
+
+const _sourceCache: Record<
+  string,
+  { data: unknown[]; pagination: ChannelPagination; schema: Record<string, unknown> | null }
+> = {};
 
 function getSocket(): Socket {
   if (!socket) {
@@ -100,7 +106,6 @@ export function useChannelStatus(): {
 
 /**
  * React hook: subscribe to live data for a specific source key.
- * Data updates automatically when the channel pushes new data.
  */
 export function useChannelData<T = Record<string, unknown>>(
   sourceKey: string
@@ -111,15 +116,13 @@ export function useChannelData<T = Record<string, unknown>>(
   loading: boolean;
   error: string | null;
 } {
-  const [data, setData] = useState<T[]>([]);
-  const [pagination, setPagination] = useState<ChannelPagination>({
-    total: 0,
-    offset: 0,
-    limit: 100,
-    hasMore: false,
-  });
-  const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
-  const [loading, setLoading] = useState(true);
+  const cached = _sourceCache[sourceKey];
+  const [data, setData] = useState<T[]>((cached?.data ?? []) as T[]);
+  const [pagination, setPagination] = useState<ChannelPagination>(
+    cached?.pagination ?? { total: 0, offset: 0, limit: 100, hasMore: false },
+  );
+  const [schema, setSchema] = useState<Record<string, unknown> | null>(cached?.schema ?? null);
+  const [loading, setLoading] = useState(!cached);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -127,6 +130,11 @@ export function useChannelData<T = Record<string, unknown>>(
 
     const onData = (payload: ChannelDataPayload) => {
       if (payload.sourceKey === sourceKey) {
+        _sourceCache[sourceKey] = {
+          data: payload.data,
+          pagination: payload.pagination,
+          schema: payload.schema ?? null,
+        };
         setData(payload.data as T[]);
         setPagination(payload.pagination);
         if (payload.schema) setSchema(payload.schema);
@@ -203,7 +211,6 @@ export function useChannelRequest(): {
 
 /**
  * React hook: subscribe to the channel's schema definition.
- * Updated when the channel sends schema info.
  */
 export function useChannelSchema(): ChannelSchemaPayload["collections"] | null {
   const [collections, setCollections] =
@@ -227,14 +234,17 @@ export function useChannelSchema(): ChannelSchemaPayload["collections"] | null {
 
 /**
  * Initialize the channel connection. Call once at app startup.
- * If a channelId is known, joins immediately. Otherwise, waits for
- * the server to assign one via a status event.
  */
 export function initChannel(knownChannelId?: string) {
-  if (knownChannelId) {
-    joinChannel(knownChannelId);
+  const resolvedId = knownChannelId || getUrlParam("channelId") || undefined;
+  if (resolvedId) {
+    joinChannel(resolvedId);
   }
-  getSocket(); // Ensures connection is established
+  getSocket();
+}
+
+export function getChannelId(): string | null {
+  return channelId;
 }
 
 /**
