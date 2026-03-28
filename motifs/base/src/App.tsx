@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { initChannel, disconnectChannel, useChannelStatus, useChannelData } from "@/lib/channel-client";
-import { Activity, TrendingUp, Users, Wifi, WifiOff } from "lucide-react";
+import { sqlite, useSqliteRows } from "@/lib/spacekit-client";
+import { Activity, TrendingUp, Users, Wifi, WifiOff, Database, Plus, Check, Trash2 } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────
 interface PrimaryRecord {
@@ -13,6 +14,13 @@ interface PrimaryRecord {
 interface MetricRecord {
   label: string;
   value: number;
+}
+
+interface ItemRecord {
+  id: number;
+  title: string;
+  completed: number;
+  created_at: string;
 }
 
 // ─── Mock Data ──────────────────────────────────────────────
@@ -31,6 +39,12 @@ const MOCK_METRICS: MetricRecord[] = [
   { label: "Conversion", value: 3.8 },
 ];
 
+const MOCK_ITEMS: ItemRecord[] = [
+  { id: 1, title: "Set up project", completed: 1, created_at: "2026-01-01" },
+  { id: 2, title: "Build dashboard", completed: 0, created_at: "2026-01-02" },
+  { id: 3, title: "Deploy to production", completed: 0, created_at: "2026-01-03" },
+];
+
 // ─── Data Helpers ───────────────────────────────────────────
 function useMotifData() {
   const { data: primaryData } = useChannelData<PrimaryRecord>("primary");
@@ -39,6 +53,16 @@ function useMotifData() {
   return {
     primary: primaryData.length > 0 ? primaryData : MOCK_PRIMARY,
     metrics: metricsData.length > 0 ? metricsData : MOCK_METRICS,
+  };
+}
+
+// ─── SpaceKit Data ──────────────────────────────────────────
+function useSpaceKitData() {
+  const { data, loading, refresh } = useSqliteRows<ItemRecord>("items");
+  return {
+    items: data.length > 0 ? data : MOCK_ITEMS,
+    itemsLoading: loading,
+    refreshItems: refresh,
   };
 }
 
@@ -69,15 +93,58 @@ function KpiCard({ label, value, icon: Icon }: { label: string; value: string | 
   );
 }
 
+// ─── SpaceKit Item Row ──────────────────────────────────────
+function ItemRow({ item, onToggle, onDelete }: { item: ItemRecord; onToggle: () => void; onDelete: () => void }) {
+  return (
+    <div className="flex items-center gap-3 py-2 border-b border-border/50 last:border-0 group">
+      <button onClick={onToggle} className={`h-5 w-5 rounded border flex items-center justify-center shrink-0 transition-colors ${item.completed ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400" : "border-border hover:border-muted-foreground/40"}`}>
+        {item.completed ? <Check className="h-3 w-3" /> : null}
+      </button>
+      <span className={`flex-1 text-sm ${item.completed ? "line-through text-muted-foreground/50" : ""}`}>{item.title}</span>
+      <span className="text-[10px] text-muted-foreground/40">{item.created_at?.slice(0, 10)}</span>
+      <button onClick={onDelete} className="opacity-0 group-hover:opacity-100 text-red-400/50 hover:text-red-400 transition-all">
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
 // ─── App ────────────────────────────────────────────────────
 export default function App() {
   const { connected, status } = useChannelStatus();
   const { primary, metrics } = useMotifData();
+  const { items, refreshItems } = useSpaceKitData();
+  const [newTitle, setNewTitle] = useState("");
 
   useEffect(() => {
     initChannel();
     return () => disconnectChannel();
   }, []);
+
+  const handleAddItem = async () => {
+    if (!newTitle.trim()) return;
+    try {
+      await sqlite.insert("items", { title: newTitle.trim() });
+      setNewTitle("");
+      refreshItems();
+    } catch {
+      // SpaceKit not connected — silently ignore in dev
+    }
+  };
+
+  const handleToggle = async (item: ItemRecord) => {
+    try {
+      await sqlite.update("items", item.id, { completed: item.completed ? 0 : 1 });
+      refreshItems();
+    } catch {}
+  };
+
+  const handleDelete = async (id: number) => {
+    try {
+      await sqlite.delete("items", id);
+      refreshItems();
+    } catch {}
+  };
 
   const kpiIcons = [TrendingUp, Users, Activity, TrendingUp];
 
@@ -89,11 +156,19 @@ export default function App() {
           <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted-foreground">Base motif template</p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5">
+            <Database className="h-3.5 w-3.5 text-violet-400" />
+            <span className="text-violet-400">SpaceKit</span>
+          </div>
           {connected ? (
-            <><Wifi className="h-3.5 w-3.5 text-emerald-400" /><span className="text-emerald-400">{status}</span></>
+            <div className="flex items-center gap-1.5">
+              <Wifi className="h-3.5 w-3.5 text-emerald-400" /><span className="text-emerald-400">{status}</span>
+            </div>
           ) : (
-            <><WifiOff className="h-3.5 w-3.5" /><span>Offline</span></>
+            <div className="flex items-center gap-1.5">
+              <WifiOff className="h-3.5 w-3.5" /><span>Offline</span>
+            </div>
           )}
         </div>
       </header>
@@ -105,34 +180,72 @@ export default function App() {
         ))}
       </section>
 
-      {/* Data Table */}
-      <section className="motif-card">
-        <h2 className="text-sm font-medium mb-4">Records</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left">
-                <th className="pb-2 pr-4 text-xs text-muted-foreground font-medium">Name</th>
-                <th className="pb-2 pr-4 text-xs text-muted-foreground font-medium text-right">Value</th>
-                <th className="pb-2 text-xs text-muted-foreground font-medium text-right">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {primary.map((row) => (
-                <tr key={row.id} className="border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors">
-                  <td className="py-2.5 pr-4 font-medium">{row.name}</td>
-                  <td className="py-2.5 pr-4 text-right font-mono text-muted-foreground">{row.value.toLocaleString()}</td>
-                  <td className="py-2.5 text-right"><StatusBadge status={row.status} /></td>
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Data Table (Channel) */}
+        <section className="motif-card">
+          <h2 className="text-sm font-medium mb-4">Records</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left">
+                  <th className="pb-2 pr-4 text-xs text-muted-foreground font-medium">Name</th>
+                  <th className="pb-2 pr-4 text-xs text-muted-foreground font-medium text-right">Value</th>
+                  <th className="pb-2 text-xs text-muted-foreground font-medium text-right">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              </thead>
+              <tbody>
+                {primary.map((row) => (
+                  <tr key={row.id} className="border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors">
+                    <td className="py-2.5 pr-4 font-medium">{row.name}</td>
+                    <td className="py-2.5 pr-4 text-right font-mono text-muted-foreground">{row.value.toLocaleString()}</td>
+                    <td className="py-2.5 text-right"><StatusBadge status={row.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* SpaceKit Items (SQLite) */}
+        <section className="motif-card">
+          <div className="flex items-center gap-2 mb-4">
+            <Database className="h-4 w-4 text-violet-400" />
+            <h2 className="text-sm font-medium">Items</h2>
+            <span className="text-[10px] text-muted-foreground bg-violet-500/10 text-violet-400 px-1.5 py-0.5 rounded">SpaceKit</span>
+          </div>
+
+          <div className="flex gap-2 mb-3">
+            <input
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAddItem()}
+              placeholder="Add item..."
+              className="flex-1 bg-muted/30 border border-border rounded px-3 py-1.5 text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <button onClick={handleAddItem} className="h-8 w-8 rounded border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors">
+              <Plus className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div>
+            {items.map((item) => (
+              <ItemRow
+                key={item.id}
+                item={item}
+                onToggle={() => handleToggle(item)}
+                onDelete={() => handleDelete(item.id)}
+              />
+            ))}
+            {items.length === 0 && (
+              <p className="text-xs text-muted-foreground/40 text-center py-4">No items yet</p>
+            )}
+          </div>
+        </section>
+      </div>
 
       {/* Footer */}
       <footer className="text-center text-[10px] text-muted-foreground/50 pt-2">
-        Channel {connected ? "connected" : "disconnected"}
+        Channel {connected ? "connected" : "disconnected"} · SpaceKit SQLite
       </footer>
     </div>
   );
