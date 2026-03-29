@@ -49,6 +49,10 @@ function getWeekDates(): Omit<DayData, "tickets">[] {
   })
 }
 
+// ─── SpaceKit Data ──────────────────────────────────────────
+// No SpaceKits declared — this template reads CW data via channels only.
+// The rushed-agent can add SQLite/Redis hooks here if local persistence is needed.
+
 function App() {
   const [days, setDays] = useState<DayData[]>([])
   const [loading, setLoading] = useState(true)
