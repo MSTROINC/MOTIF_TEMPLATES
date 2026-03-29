@@ -1,466 +1,568 @@
-# Motif(Template) Creation System
+# mSpace Motif Templates
 
-mSpace uses Motif sandboxes to execute AI-generated code in isolated environments to create mutable applications called Motifs. When a user chats with the AI agent, the agent writes code into a sandbox, which becomes a live preview rendered in the browser. Motifs define what's pre-installed in those sandboxes so they boot in milliseconds with all dependencies ready.
+Motifs are sandboxed React applications that run inside Hive Spaces. They consume live data through **Channels** (real-time Socket.IO streams from DataSpaces) and optionally provision **SpaceKits** (SQLite databases, Redis caches) for local persistence and computation. This directory contains the master template structure used to build motif apps.
 
-## Architecture Overview
+---
 
-### Runtime Flow — User Message to Live Preview
+## How Motifs Work
 
-```mermaid
-flowchart LR
-    A[User sends message] --> B[Inngest function]
-    B --> C[Sandbox.create]
-    C --> D[AI Agent writes code]
-    D --> E[Dev server starts\nVite :5173 / Next :3000]
-    E --> F[Sandbox URL saved\nto Fragment record]
-    F --> G[Preview rendered\nin iframe]
-```
-
-
-
-### Motif Creation Flow — Building a New Template
-
-```mermaid
-flowchart TD
-    S1[Scaffold directory\ntemplates/name/] --> S2[motif.toml\nalias + start_cmd]
-    S2 --> S3[motif.Dockerfile\npre-install all deps]
-    S3 --> S4[compile_page.sh\ndev server + health check]
-    S4 --> S5[App source\npackage.json, vite.config,\nshadcn components, App.tsx]
-    S5 --> S6[Update system prompt\nsrc/prompt.ts]
-    S6 --> S7[Update Sandbox.create\nsrc/inngest/functions.ts]
-    S7 --> S8[Publish via CLI\ne2b template create]
-```
-
-
-
-### Sandbox Lifecycle
-
-```mermaid
-flowchart LR
-    subgraph Build Time
-        BT1[Dockerfile builds image] --> BT2[npm install baked in]
-    end
-    subgraph Runtime
-        RT1[Sandbox boots from image] --> RT2[compile_page.sh runs]
-        RT2 --> RT3[Dev server on 0.0.0.0]
-        RT3 --> RT4[Health check passes]
-        RT4 --> RT5[AI agent edits src/App.tsx]
-        RT5 --> RT6[Hot reload updates preview]
-    end
-    RT6 -.->|30 min timeout| RT7[Sandbox terminates]
-    Build_Time --> Runtime
-```
-
-
+A Hive Space is a collaborative workspace with **slots** for motif apps. Each motif occupies a slot and runs in a Docker sandbox, isolated from other motifs. The parent page embeds the motif in an `<iframe>` and passes connection parameters (`?channelId=xxx&motifId=yyy`) via the URL.
 
 ```
-User sends message
-  → Inngest function triggers (src/inngest/functions.ts)
-  → Sandbox.create("<Motif-alias>") spins up an Motif sandbox
-  → AI agent writes code into sandbox via tools (createOrUpdateFiles, terminal, readFiles)
-  → Sandbox runs Vite/Next.js dev server on a known port
-  → Sandbox URL is saved to the Fragment record in the database
-  → Frontend renders the preview via iframe or Sandpack (src/modules/spaces/ui/components/fragment-web.tsx)
+┌─────────────────────────────────────────────────────┐
+│  Hive Space                                         │
+│  ┌───────────────────────────────────────────────┐  │
+│  │  Motif (iframe)                               │  │
+│  │                                               │  │
+│  │  channel.config.ts ── defines data contract   │  │
+│  │  spacekit.config.ts ── declares backend svcs  │  │
+│  │  App.tsx ── UI with section markers           │  │
+│  │  channel-client.ts ── Socket.IO hooks         │  │
+│  │  spacekit-client.ts ── REST hooks             │  │
+│  │                                               │  │
+│  └───────────────────────────────────────────────┘  │
+│          │                         │                │
+│          ▼                         ▼                │
+│   Channel (Socket.IO)       SpaceKit Proxy (HTTP)   │
+│   ↕ DataSpace VEs           ↕ SQLite / Redis        │
+└─────────────────────────────────────────────────────┘
 ```
 
-### How the Sandbox is Created
+### Build Pipeline (rushed-agent)
+
+When a motif is launched, the automated build pipeline:
+
+1. Reads `channel.config.ts` — creates a DataSpace with matching virtual endpoints via RAG
+2. Reads `spacekit.config.ts` — provisions SpaceKit services (SQLite, Redis) in the sandbox
+3. Rewrites `App.tsx` — replaces mock data sections with live `useChannelData()` hooks
+4. Patches `channel-client.ts` — wires the socket URL and channelId from URL params
+5. Runs `npm install && vite build --base ./` inside the sandbox
+6. Deploys `dist/` to `/motif_apps/{motifId}/`
+7. Initializes the channel — stores the `channelId` in `app_state`
+
+### Runtime
+
+1. Parent page loads the motif iframe with `?channelId=xxx&motifId=yyy`
+2. `initChannel()` reads the URL param and joins the Socket.IO room
+3. Backend replays cached data via `channel:data` events per source key
+4. `useChannelData(sourceKey)` hooks update React state reactively
+5. SpaceKit hooks (`useSqliteRows`, `useRedisValue`) call REST APIs through the proxy
+
+---
+
+## Channels
+
+A **Channel** is the real-time data bridge between a Hive Space's DataSpace and the motif UI. It streams normalized data over Socket.IO and supports pagination, schema introspection, and live refresh.
+
+### Defining a Channel Contract
+
+Every motif must include `channel.config.ts` at the project root. This file declares the **collections** the motif expects — each collection maps to a `sourceKey` used by `useChannelData()`.
 
 ```typescript
-// src/inngest/functions.ts
-const sandbox = await Sandbox.create("mspace-react-shadcn", {
-  apiKey: process.env.space_API_KEY,
-  envs: sandboxEnv,        // mHive data source credentials + context
-  allowInternetAccess: true,
-});
-await sandbox.setTimeout(SANDBOX_TIMEOUT_IN_MS); // 30 min
-```
+import type { ChannelConfig } from "./lib/channel-types";
 
-The Motif alias (`"mspace-react-shadcn"`) maps to the `Motif_name` in `Motif.toml`. Environment variables like `MHIVE_DATA_SOURCE_ID`, `DATASET_JSON`, and `MHIVE_API_TOKEN` are injected at sandbox creation time.
-
-### How the Preview URL is Resolved
-
-```typescript
-const host = sandbox.getHost(5173); // port must match the dev server
-return `https://${host}`;
-```
-
-The port **must match** what `compile_page.sh` starts the dev server on. Currently:
-
-- Vite Motifs → port `5173`
-- Next.js Motifs → port `3000`
-
-## Current Motifs
-
-
-| Motif            | Alias                 | Stack                                              | Port | Startup |
-| ---------------- | --------------------- | -------------------------------------------------- | ---- | ------- |
-| **react-shadcn** | `mspace-react-shadcn` | Vite + React 18 + TS + Tailwind + shadcn           | 5173 | ~240ms  |
-| **react-earth**  | `mspace-react-earth`  | Vite + React 18 + TS + CesiumJS + Resium + shadcn  | 5173 | ~240ms  |
-| **nextjs**       | `mspace-nextjs-Motif` | Next.js 15 + shadcn (all components)               | 3000 | Slower  |
-
-
-The **react-shadcn** Motif is used in production. It's fast because all dependencies are pre-installed and the Vite dev server starts near-instantly.
-
-## Motif Directory Structure
-
-Every Motif lives in `Motifs/<name>/` and needs three core files plus the application source:
-
-```
-Motifs/<name>/
-├── Motif.toml              # Motif configuration
-├── Motif.Dockerfile        # Docker image that becomes the sandbox
-├── compile_page.sh       # Startup script (dev server + health check)
-├── package.json          # Dependencies (Vite-based Motifs)
-├── index.html            # Entry HTML (Vite-based Motifs)∫
-├── vite.config.ts        # Vite config
-├── tailwind.config.js    # Tailwind config
-├── postcss.config.js     # PostCSS config
-├── tsconfig.json         # TypeScript config
-├── components.json       # shadcn/ui config
-└── src/
-    ├── main.tsx          # React entry point
-    ├── App.tsx           # Main component (AI agent edits this)
-    ├── channel.config.ts # Data contract (collections, fields, refresh)
-    ├── index.css         # Tailwind + CSS variables (theme)
-    ├── lib/
-    │   ├── utils.ts      # cn() utility
-    │   └── channel-types.ts  # TypeScript types for the channel system
-    └── components/ui/    # Pre-installed shadcn components
-        ├── button.tsx
-        ├── card.tsx
-        ├── table.tsx
-        └── chart.tsx     # Custom chart wrapper around recharts
-```
-
-## Channel Config (`channel.config.ts`)
-
-Each Motif includes a `src/channel.config.ts` file that declares the **data contract** between the sandbox and the mHive data layer. It tells the AI agent (and the runtime) what collections exist, what fields each collection has, and how data should be fetched.
-
-```
-src/
-├── channel.config.ts          # Data contract (collections, fields, refresh)
-└── lib/
-    └── channel-types.ts       # TypeScript types for the channel system
-```
-
-### Structure
-
-```typescript
 const config: ChannelConfig = {
   collections: {
-    primary: {                          // collection key
-      description: "Main data table",
+    primary: {
+      description: "Main data collection",
       fields: {
-        id:     { type: "string", required: true },
-        name:   { type: "string", required: true },
-        value:  { type: "number" },
+        id:    { type: "string", required: true },
+        name:  { type: "string", required: true },
+        value: { type: "number" },
         status: { type: "string", enum: ["active", "pending", "inactive"] },
       },
       pagination: { defaultLimit: 25, maxLimit: 100 },
     },
     metrics: {
-      description: "Aggregated chart data",
+      description: "Aggregated metrics for charts and KPIs",
       fields: {
         label: { type: "string", required: true },
         value: { type: "number", required: true },
       },
     },
   },
-  refreshInterval: 30000, // poll every 30 s (0 = manual only)
+  refreshInterval: 30000,
 };
+
+export default config;
 ```
 
-### Key Concepts
+**Field types:** `string`, `number`, `boolean`, `array`, `object`
 
-| Concept | Description |
-| --- | --- |
-| **Collection** | A named data set (e.g. `primary`, `metrics`). Maps to a table or query result from mHive. |
-| **Field** | A typed column inside a collection. Supported types: `string`, `number`, `boolean`, `array`, `object`. |
-| **required** | Marks a field as non-nullable. |
-| **enum** | Restricts a string field to a fixed set of values. |
-| **pagination** | Optional per-collection limits (`defaultLimit`, `maxLimit`). |
-| **refreshInterval** | Milliseconds between automatic data re-fetches. `0` disables auto-refresh. |
+**Options per field:** `required`, `enum` (allowed values), `description`
 
-### How It's Used
+**Options per collection:** `description`, `pagination` (`defaultLimit`, `maxLimit`)
 
-1. **Baseline contract** — The config ships with sensible defaults so the Motif compiles out of the box.
-2. **AI override** — At build time the AI agent may extend or fully replace the config based on the user's request and the actual mHive data schema injected via environment variables.
-3. **Runtime validation** — Components can import the config to know which fields to render in tables, charts, and forms without hard-coding column names.
+**Top-level:** `refreshInterval` in ms (0 = manual refresh only)
 
-### Type System
+### Channel Hooks
 
-All types live in `src/lib/channel-types.ts`:
-
-- `ChannelConfig` — top-level config shape (collections + refreshInterval).
-- `ChannelCollectionDef` — a single collection (fields + optional pagination).
-- `ChannelFieldDef` — a single field (type, required, enum, description).
-- `ChannelDataPayload` / `ChannelStatusPayload` / `ChannelSchemaPayload` — runtime message shapes exchanged between the sandbox and the host.
-
-## Creating a New Motif
-
-### Step 1: Scaffold the Directory
-
-```bash
-mkdir -p Motifs/<Motif-name>/src/components/ui
-```
-
-### Step 2: Create `Motif.toml`
-
-```toml
-team_id = "4f145bbd-574d-49c8-b091-3241ea2a6bd4"
-start_cmd = "/compile_page.sh"
-dockerfile = "Motif.Dockerfile"
-M
-```
-
-- `team_id` — MSTRO's Motif team (always the same value)
-- `start_cmd` — the script Motif runs when a sandbox boots
-- `Motif_name` — the alias your application code uses in `Sandbox.create()`
-- `Motif_id` — omit on first creation; Motif assigns it after publishing
-
-### Step 3: Create `Motif.Dockerfile`
-
-This builds the sandbox image. The goal is to have **everything pre-installed** so sandbox startup is instant.
-
-**Vite-based (recommended for speed):**
-
-```dockerfile
-FROM node:21-slim
-
-RUN apt-get update && apt-get install -y curl && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-COPY compile_page.sh /compile_page.sh
-RUN chmod +x /compile_page.sh
-
-WORKDIR /home/user
-
-# Copy all source files
-COPY package.json tsconfig.json tsconfig.node.json ./
-COPY vite.config.ts tailwind.config.js postcss.config.js ./
-COPY components.json index.html ./
-COPY src/ src/
-
-# Pre-install dependencies at build time
-RUN npm install
-```
-
-**Next.js (scaffolds at build time):**
-
-```dockerfile
-FROM node:21-slim
-
-RUN apt-get update && apt-get install -y curl && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-COPY compile_page.sh /compile_page.sh
-RUN chmod +x /compile_page.sh
-
-WORKDIR /home/user/nextjs-app
-RUN npx --yes create-next-app@15.3.4 . --yes
-RUN npx --yes shadcn@2.6.3 init --yes -b neutral --force
-RUN npx --yes shadcn@2.6.3 add --all --yes
-
-RUN cp -a /home/user/nextjs-app/. /home/user/ && rm -rf /home/user/nextjs-app
-```
-
-Key requirements:
-
-- Base image: `node:21-slim`
-- Install `curl` (used by `compile_page.sh` for health checks)
-- `WORKDIR` must be `/home/user` (this is where the AI agent writes files)
-- All `npm install` must happen at build time, not at runtime
-
-### Step 4: Create `compile_page.sh`
-
-This script starts the dev server and polls until it responds with HTTP 200. Motif uses it as the `start_cmd`.
-
-```bash
-#!/bin/bash
-
-function ping_server() {
-    counter=0
-    response=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:<PORT>")
-    while [[ ${response} -ne 200 ]]; do
-        let counter++
-        if (( counter % 10 == 0 )); then
-            echo "Waiting for server to start..."
-        fi
-        sleep 0.5
-        response=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:<PORT>")
-    done
-}
-
-ping_server &
-cd /home/user && <DEV_SERVER_COMMAND>
-```
-
-Replace `<PORT>` and `<DEV_SERVER_COMMAND>`:
-
-
-| Stack   | Port | Command                         |
-| ------- | ---- | ------------------------------- |
-| Vite    | 5173 | `npm run dev -- --host 0.0.0.0` |
-| Next.js | 3000 | `npx next dev --turbopack`      |
-
-
-The server **must** bind to `0.0.0.0` — Motif proxies from the outside, so `localhost`-only binding won't work.
-
-### Step 5: Set Up the Application Source
-
-For a Vite-based Motif, you need these files at minimum:
-
-`**package.json`** — Pin all dependency versions. Include:
-
-- `react`, `react-dom` — UI framework
-- `@radix-ui/*` — Primitives for shadcn components
-- `class-variance-authority`, `clsx`, `tailwind-merge` — shadcn utility dependencies
-- `lucide-react` — Icons
-- `recharts` — Charts (if needed)
-- `vite`, `@vitejs/plugin-react`, `typescript` — Dev tooling
-- `tailwindcss`, `autoprefixer`, `postcss` — Styling
-
-`**vite.config.ts`** — Must bind to `0.0.0.0`:
+All channel hooks are exported from `src/lib/channel-client.ts`:
 
 ```typescript
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import path from 'path'
+import {
+  initChannel,
+  disconnectChannel,
+  useChannelStatus,
+  useChannelData,
+  useChannelRequest,
+  useChannelSchema,
+} from "@/lib/channel-client";
+```
 
-export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
+| Hook | Returns | Purpose |
+|------|---------|---------|
+| `useChannelStatus()` | `{ connected, status, channelId }` | Socket connection state |
+| `useChannelData<T>(sourceKey)` | `{ data, pagination, schema, loading, error }` | Subscribe to live collection data |
+| `useChannelRequest()` | `{ fetchData, paginate, refresh }` | Emit fetch/paginate/refresh actions |
+| `useChannelSchema()` | `collections \| null` | Schema definitions for all collections |
+
+| Function | Purpose |
+|----------|---------|
+| `initChannel(knownChannelId?)` | Join the channel room — reads `?channelId` from URL if no arg passed. Call once at app startup. |
+| `disconnectChannel()` | Leave the room and close the socket. Call on unmount. |
+
+### Channel Socket Events
+
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| `channel:join` | Client → Server | `{ channelId }` |
+| `channel:leave` | Client → Server | `{ channelId }` |
+| `channel:data` | Server → Client | `{ channelId, sourceKey, data[], pagination, schema? }` |
+| `channel:status` | Server → Client | `{ channelId, status, message? }` |
+| `channel:schema` | Server → Client | `{ channelId, collections }` |
+| `channel:error` | Server → Client | `{ channelId, error }` |
+| `channel:request` | Client → Server | `{ channelId, sourceKey, action, params? }` |
+
+### Channel Type Definitions
+
+```typescript
+interface ChannelFieldDef {
+  type: "string" | "number" | "boolean" | "array" | "object";
+  required?: boolean;
+  enum?: string[];
+  description?: string;
+}
+
+interface ChannelCollectionDef {
+  description?: string;
+  fields: Record<string, ChannelFieldDef>;
+  pagination?: { defaultLimit?: number; maxLimit?: number };
+}
+
+interface ChannelConfig {
+  collections: Record<string, ChannelCollectionDef>;
+  refreshInterval?: number;
+}
+
+interface ChannelPagination {
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+```
+
+---
+
+## SpaceKits
+
+**SpaceKits** are optional backend services provisioned inside the motif's Docker sandbox. They give motifs local persistent storage (SQLite) and caching (Redis) without requiring external infrastructure. All SpaceKit access is proxied through the mHive backend — the motif never communicates directly with the sandbox process.
+
+### Available SpaceKits
+
+| SpaceKit | Port | Backed By | Use Case |
+|----------|------|-----------|----------|
+| **SQLite** | 4500 | `better-sqlite3` + Hono HTTP server | Persistent relational data, CRUD, local tables |
+| **Redis** | 4501 | `ioredis` + Hono HTTP adapter | Caching, counters, hash maps, key-value store |
+
+### Declaring SpaceKits
+
+Add `spacekit.config.ts` to the project root. Only declared services are provisioned — omit the file entirely if no SpaceKits are needed.
+
+```typescript
+import type { SpaceKitConfig } from "./lib/spacekit-types";
+
+const config: SpaceKitConfig = {
+  spacekits: {
+    sqlite: {
+      database: "app.db",
+      tables: {
+        tasks: {
+          columns: {
+            id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+            title: "TEXT NOT NULL",
+            completed: "INTEGER DEFAULT 0",
+            created_at: "TEXT DEFAULT (datetime('now'))",
+          },
+        },
+        notes: {
+          columns: {
+            id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+            content: "TEXT NOT NULL",
+            category: "TEXT DEFAULT 'general'",
+            pinned: "INTEGER DEFAULT 0",
+          },
+        },
+      },
+    },
+    redis: {
+      maxMemory: "64mb",
     },
   },
-  server: {
-    host: '0.0.0.0',
-    port: 5173,
-    allowedHosts: true,
-  },
-})
+};
+
+export default config;
 ```
 
-`**components.json**` — shadcn config with `rsc: false` (no server components in Vite):
+**SQLite options:** `database` (filename), `tables` (each with `columns` using SQLite DDL types)
 
-```json
-{
-  "$schema": "https://ui.shadcn.com/schema.json",
-  "style": "new-york",
-  "rsc": false,
-  "tsx": true,
-  "tailwind": {
-    "config": "tailwind.config.js",
-    "css": "src/index.css",
-    "baseColor": "neutral",
-    "cssVariables": true
-  },
-  "aliases": {
-    "components": "@/components",
-    "utils": "@/lib/utils",
-    "ui": "@/components/ui"
-  }
-}
-```
+**Redis options:** `maxMemory` (e.g. `"64mb"`)
 
-`**src/index.css**` — Must define all CSS variables for shadcn theming (light + dark mode). Copy from the existing `react-shadcn` Motif.
+Tables are created automatically by the provisioner using the column definitions as DDL. The provisioner generates `CREATE TABLE IF NOT EXISTS` statements from the config.
 
-`**src/components/ui/**` — Pre-install the shadcn components the AI agent will use. The AI is instructed via the system prompt (`src/prompt.ts`) which components are available, so the Motif and the prompt must stay in sync.
+### SpaceKit Hooks
 
-`**src/App.tsx**` — The default starting point. The AI agent will overwrite this file with generated code. Include sample imports so the Motif compiles out of the box.
-
-### Step 6: Update the System Prompt
-
-The AI agent needs to know what's available in the sandbox. Edit `src/prompt.ts` to reflect:
-
-- Which framework/libraries are installed
-- Which shadcn components are available as imports
-- What the main editable file is (e.g., `src/App.tsx`)
-- What port the dev server runs on
-- Which commands should NOT be run (e.g., `npm run dev`)
-
-Example from the current prompt:
-
-```
-Environment:
-- Vite + React 18 + TypeScript
-- Tailwind CSS + Shadcn UI pre-configured
-- Main file: src/App.tsx (ONLY edit this file)
-- Dev server running on port 5173 with hot reload
-
-MANDATORY IMPORTS - Always include these at the top of src/App.tsx:
-import { Card, ... } from "@/components/ui/card"
-import { Table, ... } from "@/components/ui/table"
-import { Button } from "@/components/ui/button"
-```
-
-### Step 7: Update Application Code
-
-In `src/inngest/functions.ts`, update the `Sandbox.create()` call to use the new Motif alias:
+All SpaceKit hooks and helpers are exported from `src/lib/spacekit-client.ts`:
 
 ```typescript
-const sandbox = await Sandbox.create("mspace-<Motif-name>", {
-  apiKey: process.env.space_API_KEY,
-  envs: sandboxEnv,
-  allowInternetAccess: true,
+import { sqlite, redis, useSqliteRows, useRedisValue } from "@/lib/spacekit-client";
+```
+
+#### SQLite — React Hook
+
+```typescript
+const { data, total, loading, error, refresh } = useSqliteRows<Task>("tasks", {
+  limit: 50,
+  offset: 0,
+  order_by: "created_at",
+  dir: "desc",
 });
 ```
 
-Update `resolveSandboxUrl()` if the port differs from 5173:
+#### SQLite — Imperative API
 
 ```typescript
-const host = sandbox.getHost(<PORT>);
+await sqlite.tables();
+await sqlite.rows("tasks", { limit: 25, offset: 0 });
+await sqlite.insert("tasks", { title: "New task" });
+await sqlite.update("tasks", 1, { completed: 1 });
+await sqlite.delete("tasks", 1);
+await sqlite.query("SELECT * FROM tasks WHERE completed = ?", [0]);
 ```
 
-## Publishing to Motif
+#### Redis — React Hook
 
-### Prerequisites
+```typescript
+const { value, type, loading, error, refresh } = useRedisValue<number>("counter");
+```
 
-- Motif API key in `.env` as `space_API_KEY`
-- Motif CLI: `pnpm dlx @Motif/cli@latest`
+#### Redis — Imperative API
 
-### Publish
+```typescript
+await redis.get("my-key");
+await redis.set("counter", 42, 3600);       // value, optional TTL in seconds
+await redis.del("old-key");
+await redis.keys("user:*", 100);             // pattern, limit
+await redis.hashSet("user:1", { name: "Alice", role: "admin" });
+await redis.hashGet("user:1");
+```
+
+### SpaceKit REST Routes (proxied)
+
+All requests go through `{BACKEND}/v1/hive-spaces/motifs/{motifId}/spacekits/{skType}/proxy/{path}`.
+
+**SQLite:**
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/tables` | List all tables |
+| GET | `/tables/{name}/rows?limit=&offset=&order_by=&dir=` | Read rows |
+| POST | `/tables/{name}/rows` | Insert row |
+| PUT | `/tables/{name}/rows/{id}` | Update row |
+| DELETE | `/tables/{name}/rows/{id}` | Delete row |
+| POST | `/query` | Execute raw SQL `{ sql, params }` |
+| GET | `/health` | Health check |
+
+**Redis:**
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/get/{key}` | Get value (returns `{ key, type, value, ttl }`) |
+| POST | `/set` | Set value `{ key, value, ttl? }` |
+| DELETE | `/del/{key}` | Delete key |
+| GET | `/keys?pattern=&limit=` | List keys |
+| POST | `/hash/set` | Set hash fields `{ key, fields }` |
+| GET | `/hash/{key}` | Get hash fields |
+| GET | `/health` | Health check |
+| GET | `/info` | Redis server info |
+
+### SpaceKit Type Definitions
+
+```typescript
+interface SpaceKitTableDef {
+  columns: Record<string, string>;
+}
+
+interface SpaceKitSqliteConfig {
+  database?: string;
+  tables?: Record<string, SpaceKitTableDef>;
+}
+
+interface SpaceKitRedisConfig {
+  maxMemory?: string;
+}
+
+interface SpaceKitConfig {
+  spacekits: {
+    sqlite?: SpaceKitSqliteConfig;
+    redis?: SpaceKitRedisConfig;
+  };
+}
+
+interface SpaceKitRow {
+  id?: number;
+  [key: string]: unknown;
+}
+
+interface SpaceKitQueryResult {
+  rows: SpaceKitRow[];
+  count: number;
+}
+
+interface SpaceKitListResult {
+  rows: SpaceKitRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+```
+
+---
+
+## Template Structure
+
+```
+motifs/base/
+├── SKILL.md                     ← AI development guide
+├── package.json                 ← dependencies
+├── vite.config.ts               ← base: './', @/ alias
+├── tsconfig.json                ← strict mode, path aliases
+├── tsconfig.node.json           ← vite config TS settings
+├── tailwind.config.js           ← dark mode, shadcn theme tokens, chart colors
+├── postcss.config.js            ← tailwindcss + autoprefixer
+├── components.json              ← shadcn/ui config (New York style)
+├── index.html                   ← dark mode, Inter + JetBrains Mono fonts
+└── src/
+    ├── main.tsx                 ← React entry point
+    ├── App.tsx                  ← main app with section markers
+    ├── channel.config.ts        ← data contract (collections + fields)
+    ├── spacekit.config.ts       ← SpaceKit service declarations
+    ├── index.css                ← Tailwind layers + CSS variables + utilities
+    ├── vite-env.d.ts            ← Vite type reference
+    ├── lib/
+    │   ├── channel-client.ts    ← Socket.IO hooks (useChannelData, etc.)
+    │   ├── channel-types.ts     ← Channel TypeScript interfaces
+    │   ├── spacekit-client.ts   ← SpaceKit REST hooks (useSqliteRows, etc.)
+    │   ├── spacekit-types.ts    ← SpaceKit TypeScript interfaces
+    │   └── utils.ts             ← cn() utility (clsx + tailwind-merge)
+    └── components/ui/
+        ├── button.tsx           ← shadcn Button
+        └── card.tsx             ← shadcn Card
+```
+
+---
+
+## Technology Stack
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| Build | Vite | 5.x |
+| UI | React | 18.x |
+| Language | TypeScript | 5.x |
+| Styling | Tailwind CSS | 3.x |
+| Components | shadcn/ui (New York) | latest |
+| Charts | recharts | 2.x |
+| Icons | lucide-react | 0.460+ |
+| Realtime | socket.io-client | 4.x |
+| Fonts | Inter (UI), JetBrains Mono (code) | Google Fonts |
+
+---
+
+## App.tsx Section Markers
+
+The build pipeline's rewrite agent parses `App.tsx` using section markers. These markers are **required** and must appear as comments in this exact format:
+
+| Marker | Purpose |
+|--------|---------|
+| `// ─── Types` | TypeScript interfaces for each collection matching `channel.config.ts` |
+| `// ─── Mock Data` | Sample data arrays matching the types — used for dev preview |
+| `// ─── Data Helpers` | `useMotifData()` hook that reads channel data with mock fallback |
+| `// ─── SpaceKit Data` | `useSpaceKitData()` hook if SpaceKits are declared (optional) |
+| `// ─── App` | Main component consuming the hooks |
+
+The rewrite agent replaces the Mock Data and Data Helpers sections with live channel integration while preserving the UI code in the App section.
+
+### Mock Data Fallback Pattern
+
+Always provide mock data so the motif renders during development and before the channel connects:
+
+```typescript
+function useMotifData() {
+  const { data: liveRecords } = useChannelData<RecordType>("primary");
+  return {
+    records: liveRecords.length > 0 ? liveRecords : MOCK_RECORDS,
+  };
+}
+```
+
+---
+
+## Creating a New Motif Template
+
+### 1. Copy the Base
 
 ```bash
-cd Motifs/<Motif-name>
-
-# Load credentials
-set -a && source ../../.env
-export space_ACCESS_TOKEN="$space_API_KEY"
-
-# Build and publish
-pnpm dlx @Motif/cli@latest Motif create mspace-<Motif-name> \
-  --dockerfile Motif.Dockerfile \
-  --cmd /compile_page.sh \
-  --ready-cmd "sleep 1"
+cp -r master-template-structure/motifs/base my-motif
+cd my-motif
 ```
 
-After publishing, the CLI outputs a `Motif_id`. Save it back into `Motif.toml`.
+### 2. Define Your Data Contract
 
-### Verify
+Edit `src/channel.config.ts` with the collections your motif needs:
+
+```typescript
+const config: ChannelConfig = {
+  collections: {
+    tickets: {
+      description: "Support tickets from the connected API",
+      fields: {
+        id:       { type: "string", required: true },
+        subject:  { type: "string", required: true },
+        priority: { type: "string", enum: ["low", "medium", "high", "critical"] },
+        status:   { type: "string", enum: ["open", "in_progress", "resolved", "closed"] },
+        created:  { type: "string", description: "ISO date" },
+      },
+      pagination: { defaultLimit: 50, maxLimit: 200 },
+    },
+    summary: {
+      description: "Ticket counts by status",
+      fields: {
+        status: { type: "string", required: true },
+        count:  { type: "number", required: true },
+      },
+    },
+  },
+  refreshInterval: 60000,
+};
+```
+
+### 3. Declare SpaceKits (Optional)
+
+Edit `src/spacekit.config.ts` if you need local persistence:
+
+```typescript
+const config: SpaceKitConfig = {
+  spacekits: {
+    sqlite: {
+      database: "tickets.db",
+      tables: {
+        bookmarks: {
+          columns: {
+            id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+            ticket_id: "TEXT NOT NULL",
+            note: "TEXT",
+            created_at: "TEXT DEFAULT (datetime('now'))",
+          },
+        },
+      },
+    },
+  },
+};
+```
+
+### 4. Build the UI
+
+Edit `src/App.tsx` with your interfaces, mock data, and components. Keep the section markers intact:
+
+```typescript
+// ─── Types ──────────────────────────────────────────────────
+interface Ticket { id: string; subject: string; priority: string; status: string; created: string; }
+interface Summary { status: string; count: number; }
+
+// ─── Mock Data ──────────────────────────────────────────────
+const MOCK_TICKETS: Ticket[] = [/* sample data */];
+const MOCK_SUMMARY: Summary[] = [/* sample data */];
+
+// ─── Data Helpers ───────────────────────────────────────────
+function useMotifData() {
+  const { data: tickets } = useChannelData<Ticket>("tickets");
+  const { data: summary } = useChannelData<Summary>("summary");
+  return {
+    tickets: tickets.length > 0 ? tickets : MOCK_TICKETS,
+    summary: summary.length > 0 ? summary : MOCK_SUMMARY,
+  };
+}
+
+// ─── App ────────────────────────────────────────────────────
+export default function App() {
+  const { connected } = useChannelStatus();
+  const { tickets, summary } = useMotifData();
+
+  useEffect(() => {
+    initChannel();
+    return () => disconnectChannel();
+  }, []);
+
+  return (/* your UI */);
+}
+```
+
+### 5. Add shadcn/ui Components
+
+The template is pre-configured for shadcn/ui. Add components as needed:
 
 ```bash
-pnpm dlx @Motif/cli@latest Motif list
+npx shadcn@latest add table chart tabs dialog select badge
 ```
 
-### Update an Existing Motif
+Components install to `src/components/ui/`.
 
-Same publish command. The CLI detects the existing `Motif_id` in `Motif.toml` and updates in place. No application code changes needed if the alias stays the same.
+### 6. Dev & Build
 
-## Design Constraints
+```bash
+npm install
+npm run dev        # dev server at localhost:5173
+npm run build      # production build to dist/
+```
 
-1. **Pre-install everything** — Sandboxes cannot run `npm install` at runtime. All dependencies must be baked into the Docker image.
-2. **Multi-screen support** — The AI agent can create and edit multiple screens/pages beyond `src/App.tsx`.
-3. **Host binding** — Dev servers must listen on `0.0.0.0`, not `localhost`.
-4. **Port consistency** — The port in `compile_page.sh`, `vite.config.ts`, and `resolveSandboxUrl()` must all match.
-5. **Prompt ↔ Motif sync** — Any component added/removed from the Motif must be reflected in `src/prompt.ts`.
-6. **30-minute timeout** — Sandboxes auto-terminate after `SANDBOX_TIMEOUT_IN_MS` (configurable in `src/constants.ts`).
-7. **Environment variables** — Data context (`DATASET_JSON`, `MHIVE_`*) is injected at sandbox creation, not baked into the Motif.
+---
 
-## Adding New shadcn Components to an Existing Motif
+## Built-In CSS Utilities
 
-1. Add the component file to `Motifs/<name>/src/components/ui/`
-2. Add its Base dependency to `package.json` if needed
-3. Update `src/prompt.ts` with the new import path
-4. Republish the Motif (see Publishing section)
-5. Existing sandboxes are unaffected — only new sandboxes use the updated Motif
+The template includes utility classes in `src/index.css` for consistent styling:
 
+| Class | Purpose |
+|-------|---------|
+| `.motif-card` | Card container with border, rounded corners, padding |
+| `.motif-kpi-value` | Large bold number for KPI displays |
+| `.motif-kpi-label` | Small muted label text |
+| `.animate-fade-in` | Fade-in animation (0.3s) |
+
+CSS variables for the dark theme are defined on `:root` and follow the shadcn/ui convention (`--background`, `--foreground`, `--card`, `--primary`, `--muted-foreground`, `--border`, `--ring`, `--chart-1` through `--chart-5`, etc.).
+
+---
+
+## Rules
+
+1. **`base: './'`** in `vite.config.ts` is mandatory — motifs are served at a subpath, not root
+2. **Always dark mode** — `class="dark"` on `<html>` in `index.html`
+3. **Section markers are required** — the rewrite agent parses them to patch `App.tsx`
+4. **One `initChannel()` call** — in a top-level `useEffect`, paired with `disconnectChannel()` cleanup
+5. **No routing** — motifs are single-page apps, no react-router
+6. **Responsive** — must work in iframe viewport (min ~320px to full width)
+7. **No external API calls** — all data comes through Channels or SpaceKit hooks
+8. **SpaceKit is optional** — remove `spacekit.config.ts` if no backend services are needed
+9. **SpaceKit config is declarative** — tables and schema are provisioned automatically at build time
+10. **Do not modify hook signatures** in `channel-client.ts` — the rewrite agent depends on them
+11. **Mock data must match `channel.config.ts`** — same field names, types, and structure
