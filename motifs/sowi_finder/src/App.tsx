@@ -152,6 +152,9 @@ function useMotifData() {
   };
 }
 
+// ─── SpaceKit Data ──────────────────────────────────────────
+// No SpaceKits declared — this motif reads CW and Hudu data via channels only.
+
 // ─── Sub-components ─────────────────────────────────────────
 function ConfidenceBadge({ score }: { score: number }) {
   const pct = Math.round(score * 100);
